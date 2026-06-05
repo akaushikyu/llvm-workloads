@@ -23,4 +23,20 @@ Using the `wllvm` framework available [here](https://github.com/travitch/whole-p
     - Followed by `make`
     - To package the bitcode archive of `musl-libc`, navigate to `lib` directory and run `extract-bc -a /opt/riscv-llvm/bin/llvm-ar libc.a`. This will generate a `libc.bca`
     - To extract the individual bitcode files, execute `llvm-ar x musl-libc.bca`. 
+- [uclibc](tests/bits/uclibc-libc.bca)
+   - First install the linux cross headers for riscv -- `sudo apt install gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu linux-libc-dev-riscv64-cross`
+   - Clone the uclibc-ng repo and run the following command to configure uclibc for RISC-V: 'make menuconfig', select `riscv64` in target architecture.
+   - Open the `.config` file, and update the `KERNEL_HEADERS=` to `KERNEL_HEADERS=/usr/riscv64-linux-gnu/include`, which is the location of the riscv linux kernel headers 
+   - To compile uclibc with LLVM, a few changes a required. These changes do the following: (1) convert nested functions that are unacceptable by clang but fine by gcc, and (2) remove GNU assembler directive. Apply the `clang-uclibc.patch` using `git apply clang-uclibc.patch`.
+   - Before using `wllvm`, first compile uclibc using `clang` to generate the `bits/` include files by running
+   ```
+    make VERBOSE=1  CROSS_COMPILE=riscv64-linux-gnu- \
+    CC="clang --target=riscv64-linux-gnu" \
+    AR=/opt/riscv-llvm/bin/llvm-ar   \
+    RANLIB=/opt/riscv-llvm/bin/llvm-ranlib \
+    NM=/opt/riscv-llvm/bin/llvm-nm \
+    STRIP=llvm-strip
+   ```
+   - Once the `include/bits/` directory is created, we can run `wllvm` by changing `CC="clang..` to `CC="wllvm..`
+   - Follow the same steps for the above libc to package the bitcode archive and extract the individual bitcode files
 

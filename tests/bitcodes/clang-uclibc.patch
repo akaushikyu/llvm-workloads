@@ -1,0 +1,30 @@
+diff --git a/libc/sysdeps/linux/common/rename.c b/libc/sysdeps/linux/common/rename.c
+index 613ae4e44..226f132b2 100644
+--- a/libc/sysdeps/linux/common/rename.c
++++ b/libc/sysdeps/linux/common/rename.c
+@@ -20,9 +20,10 @@ int rename(const char *oldpath, const char *newpath)
+ # include <fcntl.h>
+ int rename(const char *oldpath, const char *newpath)
+ {
+-	_syscall5(int, renameat2, int, olddfd, const char *, oldpath,
+-		  int, newdfd, const char *, newpath, int, flags)
+-	return renameat2(AT_FDCWD, oldpath, AT_FDCWD, newpath, 0);
++	//_syscall5(int, renameat2, int, olddfd, const char *, oldpath,
++	//	  int, newdfd, const char *, newpath, int, flags)
++  return INLINE_SYSCALL(renameat2, 2, oldpath, newpath);
++	//return renameat2(AT_FDCWD, oldpath, AT_FDCWD, newpath, 0);
+ }
+ #else
+ _syscall2(int, rename, const char *, oldpath, const char *, newpath)
+diff --git a/libc/sysdeps/linux/riscv64/clone.S b/libc/sysdeps/linux/riscv64/clone.S
+index 315de2ac8..dc5425335 100644
+--- a/libc/sysdeps/linux/riscv64/clone.S
++++ b/libc/sysdeps/linux/riscv64/clone.S
+@@ -69,7 +69,6 @@ L (error):
+ 
+ ENTRY (__thread_start)
+ L (thread_start):
+-	.cfi_label .Ldummy
+ 	cfi_undefined (ra)
+ 
+ 	/* Restore the arg for user's function.  */
