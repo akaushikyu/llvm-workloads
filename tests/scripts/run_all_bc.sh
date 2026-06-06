@@ -34,8 +34,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-LLVM_ROOT="$HOME/llvm-repos/test/llvm-project"
-LLVM_BUILD="$LLVM_ROOT/build"
+LLVM_ROOT="${LLVM_ROOT:-$HOME/llvm-repos/test/llvm-project}"
+LLVM_BUILD="${LLVM_BUILD:-$LLVM_ROOT/build}"
 
 LLVM_DIS="$LLVM_BUILD/bin/llvm-dis"
 LLC="$LLVM_BUILD/bin/llc"
