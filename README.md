@@ -89,6 +89,33 @@ $HOME/llvm-repos/test/llvm-project/build/bin/llvm-dis
 $HOME/llvm-repos/test/llvm-project/build/bin/llc
 ```
 
+You can override the default LLVM location by setting `LLVM_ROOT`:
+
+```bash
+export LLVM_ROOT=/path/to/llvm-project
+```
+
+By default, the script expects the LLVM build directory to be:
+
+```bash
+$LLVM_ROOT/build
+```
+
+If your LLVM build directory is somewhere else, set `LLVM_BUILD` directly:
+
+```bash
+export LLVM_BUILD=/path/to/llvm-build
+```
+
+Example:
+
+```bash
+export LLVM_ROOT=$HOME/src/llvm-project
+export LLVM_BUILD=$LLVM_ROOT/build
+cd <directory-containing-bc-files>
+bash /path/to/tests/scripts/run_all_bc.sh
+```
+
 It also depends on:
 
 ```bash
@@ -103,6 +130,7 @@ Check whether it is installed with:
 
 ```bash
 dot -V
+```
 
 ### Outputs
 
@@ -307,6 +335,32 @@ LLVM `llc` is expected at:
 $HOME/llvm-repos/test/llvm-project/build/bin/llc
 ```
 
+You can override the default LLVM location by setting `LLVM_ROOT`:
+
+```bash
+export LLVM_ROOT=/path/to/llvm-project
+```
+
+By default, the script expects the LLVM build directory to be:
+
+```bash
+$LLVM_ROOT/build
+```
+
+If your LLVM build directory is somewhere else, set `LLVM_BUILD` directly:
+
+```bash
+export LLVM_BUILD=/path/to/llvm-build
+```
+
+Example:
+
+```bash
+export LLVM_ROOT=$HOME/src/llvm-project
+export LLVM_BUILD=$LLVM_ROOT/build
+bash tests/scripts/mcfg-for-outTest.sh outTest/MIR-after-expand-count
+```
+
 Graphviz is also required:
 
 ```bash
@@ -342,5 +396,3 @@ outTest/DOT-after-expand-count/
 outTest/SVG-after-expand-count/
 outTest/LOGs/
 ```
-
----
