@@ -7,12 +7,12 @@ These workloads can be programs and LLVM bitcodes.
 Using the `wllvm` framework available [here](https://github.com/travitch/whole-program-llvm) to create bitcodes of large programs.
 
 ## Workloads
-- [llvm-libc](tests/bitcodes/llvm-libc.bca)
+- [llvm-libc](tests/bitcodes/llvm-libc/llvm-libc.bca)
     - LLVM libc 
     - To extract the individual bitcode files, execute `llvm-ar x llvm-libc.bca`. 
     - The individual bitcode files are hidden. To expose them, execute `ls -la`
 
-- [musl-libc](tests/bitodes/musl-libc.bca)
+- [musl-libc](tests/bitodes/musl-libc/musl-libc.bca)
     - Use WLLVM to generate bitcode
     - Run the following command to configure and build the `musl-libc`:
         ```
@@ -23,7 +23,7 @@ Using the `wllvm` framework available [here](https://github.com/travitch/whole-p
     - Followed by `make`
     - To package the bitcode archive of `musl-libc`, navigate to `lib` directory and run `extract-bc -a /opt/riscv-llvm/bin/llvm-ar libc.a`. This will generate a `libc.bca`
     - To extract the individual bitcode files, execute `llvm-ar x musl-libc.bca`. 
-- [uclibc](tests/bits/uclibc-libc.bca)
+- [uclibc](tests/bits/uC-libc/uclibc-libc.bca)
    - First install the linux cross headers for riscv -- `sudo apt install gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu linux-libc-dev-riscv64-cross`
    - Clone the uclibc-ng repo and run the following command to configure uclibc for RISC-V: 'make menuconfig', select `riscv64` in target architecture.
    - Open the `.config` file, and update the `KERNEL_HEADERS=` to `KERNEL_HEADERS=/usr/riscv64-linux-gnu/include`, which is the location of the riscv linux kernel headers 
@@ -39,6 +39,114 @@ Using the `wllvm` framework available [here](https://github.com/travitch/whole-p
    ```
    - Once the `include/bits/` directory is created, we can run `wllvm` by changing `CC="clang..` to `CC="wllvm..`
    - Follow the same steps for the above libc to package the bitcode archive and extract the individual bitcode files
+- [picolibc](tests/bits/pico-libc/pico-libc.bca)
+   - Clone the picolibc repository, enter the source directory, and create the directories needed for WLLVM.
+
+   ```bash
+   git clone https://github.com/picolibc/picolibc.git
+   cd path/to/picolibc
+
+   mkdir -p path/to/bitcode_store
+   mkdir -p path/to/wllvm-shims
+   ```
+
+   - Create an `objcopy` wrapper so WLLVM uses LLVM's `llvm-objcopy`. This is needed because the host `objcopy` may not recognize RISC-V ELF object files.
+
+   ```bash
+   cat > path/to/wllvm-shims/objcopy <<'EOF'
+   #!/usr/bin/env bash
+   exec path/to/llvm-project/build/bin/llvm-objcopy "$@"
+   EOF
+
+   chmod +x path/to/wllvm-shims/objcopy
+   export PATH=path/to/wllvm-shims:$PATH
+   ```
+
+   - Configure WLLVM to use Clang and set the directory where WLLVM stores generated bitcode.
+
+   ```bash
+   export WLLVM_BC_STORE=path/to/bitcode_store
+
+   export LLVM_COMPILER=clang
+   export LLVM_COMPILER_PATH=/usr/bin
+   export LLVM_CC_NAME=clang
+   export LLVM_CXX_NAME=clang++
+   ```
+
+   - Create the Meson cross file for bare-metal RISC-V 64-bit.
+
+   ```bash
+   cat > path/to/picolibc/riscv64-wllvm.cross <<'EOF'
+   [binaries]
+   c = 'path/to/wllvm'
+   cpp = 'path/to/wllvm++'
+   ar = 'path/to/llvm-project/build/bin/llvm-ar'
+   ranlib = 'path/to/llvm-project/build/bin/llvm-ranlib'
+
+   [host_machine]
+   system = 'none'
+   cpu_family = 'riscv64'
+   cpu = 'riscv64'
+   endian = 'little'
+
+   [built-in options]
+   c_args = ['--target=riscv64-unknown-elf', '-march=rv64ima_zicsr_zifencei', '-mabi=lp64', '-ffreestanding']
+   cpp_args = ['--target=riscv64-unknown-elf', '-march=rv64ima_zicsr_zifencei', '-mabi=lp64', '-ffreestanding']
+   c_link_args = ['--target=riscv64-unknown-elf', '-march=rv64ima_zicsr_zifencei', '-mabi=lp64', '-nostdlib', '-fuse-ld=lld']
+   cpp_link_args = ['--target=riscv64-unknown-elf', '-march=rv64ima_zicsr_zifencei', '-mabi=lp64', '-nostdlib', '-fuse-ld=lld']
+   EOF
+   ```
+
+   - Configure picolibc with Meson, then build it with Ninja using WLLVM.
+
+   ```bash
+
+   meson setup path/to/picolibc/build-wllvm-riscv \
+   --cross-file path/to/picolibc/riscv64-wllvm.cross \
+   -Dmultilib=false
+
+   WLLVM_BC_STORE=path/to/bitcode_store \
+   PATH=path/to/wllvm-shims:$PATH \
+   ninja -C path/to/picolibc/build-wllvm-riscv
+   ```
+
+   - Generate the picolibc `.bca` archive directly from the WLLVM-built `libc.a`. Assembly-derived `.S.o` members are skipped because they do not contain LLVM IR.
+
+   ```bash
+   export LLVM_AR_NAME=path/to/llvm-project/build/bin/llvm-ar
+   export LLVM_LINK_NAME=path/to/llvm-project/build/bin/llvm-link
+   export WLLVM_BC_STORE=path/to/bitcode_store
+
+
+   path/to/extract-bc \
+   path/to/picolibc/build-wllvm-riscv/libc.a
+   ```
+
+   - The generated bitcode archive is written beside the original `libc.a` archive.
+
+   ```text
+   path/to/picolibc/build-wllvm-riscv/libc.bca
+   ```
+
+   - Move the generated archive to the desired output directory.
+
+   ```bash
+   mkdir -p path/to/picolibc/BCA-riscv
+
+   mv path/to/picolibc/build-wllvm-riscv/libc.bca \
+      path/to/picolibc/BCA-riscv/libc.bca
+   ```
+
+   - Create a clean folder and extract every individual `.bc` member from `libc.bca`.
+
+   ```bash
+   mkdir -p path/to/picolibc/extracted-libc-bc
+
+   cd path/to/picolibc/extracted-libc-bc
+
+   path/to/llvm-project/build/bin/llvm-ar \
+   x path/to/picolibc/BCA-riscv/libc.bca
+   ```
 # Script Usage
 
 ## `tests/scripts/run_all_bc.sh`
