@@ -179,7 +179,13 @@ Generate machine CFG output:
 
 ```bash
 cd <directory-containing-bc-files>
-bash /path/to/tests/scripts/run_all_bc.sh -mcfg
+bash /path/to/tests/scripts/run_all_bc.sh +mcfg
+```
+Convert all the branches to Pseudo***UsingBNE (The Pseudo branches are turned into the proper branch depending on their condition later using RISCVPseudoBNEBranchExpansion.cpp):
+
+```bash
+cd <directory-containing-bc-files>
+bash /path/to/tests/scripts/run_all_bc.sh +bnerd
 ```
 
 Show help:
