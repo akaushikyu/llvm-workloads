@@ -1,0 +1,1017 @@
+diff --git a/tests/scripts/mcfg-for-outTest.sh b/tests/scripts/mcfg-for-outTest.sh
+index cb9039b..3e8b3e5 100755
+--- a/tests/scripts/mcfg-for-outTest.sh
++++ b/tests/scripts/mcfg-for-outTest.sh
+@@ -3,18 +3,37 @@ set -u
+ 
+ LLVM_ROOT="${LLVM_ROOT:-$HOME/llvm-repos/test/llvm-project}"
+ LLVM_BUILD="${LLVM_BUILD:-$LLVM_ROOT/build}"
++
+ LLC="$LLVM_BUILD/bin/llc"
+ 
+-ROOTDIR="$(pwd)"
+-OUTROOT="$ROOTDIR/outTest"
++usage() {
++  echo "Usage:"
++  echo "  $(basename "$0") MIR_DIRECTORY [CFG_OUTPUT_DIRECTORY]"
++  echo
++  echo "Example:"
++  echo "  $(basename "$0") \\"
++  echo "    /path/to/outTest/MIR-after-expand-count \\"
++  echo "    /path/to/outTest/CFG"
++}
+ 
+-MIRDIR="${1:-$OUTROOT/MIR-after-expand-count}"
++if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
++  usage
++  exit 1
++fi
+ 
+-DOTROOT="$OUTROOT/DOT-after-expand-count"
+-SVGROOT="$OUTROOT/SVG-after-expand-count"
+-LOGDIR="$OUTROOT/LOGs"
++if [ ! -x "$LLC" ]; then
++  echo "ERROR: llc not found or not executable:"
++  echo "  $LLC"
++  exit 1
++fi
+ 
+-mkdir -p "$DOTROOT" "$SVGROOT" "$LOGDIR"
++if ! command -v dot >/dev/null 2>&1; then
++  echo "ERROR: Graphviz 'dot' command was not found."
++  exit 1
++fi
++
++# Canonicalize the MIR directory and remove any trailing-slash ambiguity.
++MIRDIR="$(realpath "$1")"
+ 
+ if [ ! -d "$MIRDIR" ]; then
+   echo "ERROR: MIR directory does not exist:"
+@@ -22,7 +41,101 @@ if [ ! -d "$MIRDIR" ]; then
+   exit 1
+ fi
+ 
+-TOTAL=$(find "$MIRDIR" -type f -name '*.after-expand-count.mir' | wc -l)
++# Normally MIRDIR is:
++#   /.../outTest/MIR-after-expand-count
++#
++# Therefore OUTROOT becomes:
++#   /.../outTest
++OUTROOT="$(dirname "$MIRDIR")"
++
++if [ "$#" -eq 2 ]; then
++  CFGROOT="$(realpath -m "$2")"
++else
++  CFGROOT="$OUTROOT/CFG"
++fi
++
++DOTROOT="$CFGROOT/DOT-after-expand-count"
++SVGROOT="$CFGROOT/SVG-after-expand-count"
++LOGDIR="$CFGROOT/LOGs"
++
++mkdir -p \
++  "$CFGROOT" \
++  "$DOTROOT" \
++  "$SVGROOT" \
++  "$LOGDIR"
++
++count_mir_functions() {
++  local mir="$1"
++  local count
++
++  count=$(grep -cE '^name:[[:space:]]*' "$mir" 2>/dev/null || true)
++  printf '%s\n' "$count"
++}
++
++count_matching_files() {
++  local dir="$1"
++  local pattern="$2"
++
++  if [ ! -d "$dir" ]; then
++    echo 0
++    return
++  fi
++
++  find "$dir" \
++    -maxdepth 1 \
++    -type f \
++    -name "$pattern" \
++    -printf '.' |
++    wc -c
++}
++
++outputs_are_current() {
++  local mir="$1"
++  local dot_dir="$2"
++  local svg_dir="$3"
++
++  local func_count
++  local dot_count
++  local svg_count
++
++  func_count=$(count_mir_functions "$mir")
++  dot_count=$(count_matching_files "$dot_dir" '*.dot')
++  svg_count=$(count_matching_files "$svg_dir" '*.svg')
++
++  # The expected number of outputs must exist.
++  if [ "$func_count" -le 0 ]; then
++    return 1
++  fi
++
++  if [ "$dot_count" -ne "$func_count" ]; then
++    return 1
++  fi
++
++  if [ "$svg_count" -ne "$func_count" ]; then
++    return 1
++  fi
++
++  # Regenerate if any DOT or SVG file is older than the MIR input.
++  if find "$dot_dir" "$svg_dir" \
++      -maxdepth 1 \
++      -type f \
++      \( -name '*.dot' -o -name '*.svg' \) \
++      ! -newer "$mir" \
++      -print -quit |
++      grep -q .; then
++    return 1
++  fi
++
++  return 0
++}
++
++TOTAL=$(
++  find "$MIRDIR" \
++    -type f \
++    -name '*.after-expand-count.mir' |
++    wc -l
++)
++
+ DONE=0
+ SKIPPED=0
+ PROCESSED=0
+@@ -52,49 +165,41 @@ progress_bar() {
+   empty_bar=$(printf "%${empty}s" "" | tr ' ' '-')
+ 
+   printf "\r[%s%s] %3d%%  %d/%d  %s" \
+-    "$filled_bar" "$empty_bar" "$percent" "$done" "$total" "$current"
+-}
+-
+-count_mir_functions() {
+-  local mir="$1"
+-  grep -E '^name:[[:space:]]*' "$mir" | wc -l
++    "$filled_bar" \
++    "$empty_bar" \
++    "$percent" \
++    "$done" \
++    "$total" \
++    "$current"
+ }
+ 
+-has_complete_outputs() {
+-  local mir="$1"
+-  local dot_dir="$2"
+-  local svg_dir="$3"
+-
+-  local func_count=0
+-  local dot_count=0
+-  local svg_count=0
+-
+-  func_count=$(count_mir_functions "$mir")
+-
+-  if [ -d "$dot_dir" ]; then
+-    dot_count=$(find "$dot_dir" -maxdepth 1 -type f -name '*.dot' | wc -l)
+-  fi
+-
+-  if [ -d "$svg_dir" ]; then
+-    svg_count=$(find "$svg_dir" -maxdepth 1 -type f -name '*.svg' | wc -l)
+-  fi
+-
+-  [ "$func_count" -gt 0 ] &&
+-  [ "$dot_count" -eq "$func_count" ] &&
+-  [ "$svg_count" -eq "$func_count" ]
+-}
+-
+-echo "MIR directory: $MIRDIR"
+-echo "Total MIR files: $TOTAL"
++echo "MIR directory:     $MIRDIR"
++echo "CFG output root:   $CFGROOT"
++echo "DOT output root:   $DOTROOT"
++echo "SVG output root:   $SVGROOT"
++echo "Log directory:     $LOGDIR"
++echo "Total MIR files:   $TOTAL"
+ 
+ if [ "$TOTAL" -eq 0 ]; then
++  echo
+   echo "ERROR: No *.after-expand-count.mir files found in:"
+   echo "  $MIRDIR"
+   exit 1
+ fi
+ 
+ while IFS= read -r -d '' mir; do
+-  rel="${mir#$MIRDIR/}"
++  # Produce a path relative to MIRDIR.
++  #
++  # Example:
++  #   mir:
++  #     /.../MIR-after-expand-count/subdir/test.after-expand-count.mir
++  #
++  #   rel:
++  #     subdir/test.after-expand-count.mir
++  #
++  # This prevents the absolute /home/akamran/... path from appearing
++  # inside the output directory.
++  rel="$(realpath --relative-to="$MIRDIR" "$mir")"
+   stem="${rel%.after-expand-count.mir}"
+ 
+   THIS_DOT_DIR="$DOTROOT/$stem"
+@@ -103,84 +208,125 @@ while IFS= read -r -d '' mir; do
+   mkdir -p "$THIS_DOT_DIR" "$THIS_SVG_DIR"
+ 
+   safe_log_name="${stem//\//__}"
++
+   dot_log="$LOGDIR/$safe_log_name.dot-machine-cfg.log"
+   svg_log="$LOGDIR/$safe_log_name.dot-to-svg.log"
+ 
+   echo
+   echo "==> $mir"
++
+   progress_bar "$DONE" "$TOTAL" "$stem"
+ 
+-  if has_complete_outputs "$mir" "$THIS_DOT_DIR" "$THIS_SVG_DIR"; then
++  if outputs_are_current \
++      "$mir" \
++      "$THIS_DOT_DIR" \
++      "$THIS_SVG_DIR"; then
++
+     func_count=$(count_mir_functions "$mir")
+-    dot_count=$(find "$THIS_DOT_DIR" -maxdepth 1 -type f -name '*.dot' 2>/dev/null | wc -l)
+-    svg_count=$(find "$THIS_SVG_DIR" -maxdepth 1 -type f -name '*.svg' 2>/dev/null | wc -l)
++    dot_count=$(count_matching_files "$THIS_DOT_DIR" '*.dot')
++    svg_count=$(count_matching_files "$THIS_SVG_DIR" '*.svg')
+ 
+     echo
+-    echo "SKIP: complete outputs found for $stem"
++    echo "SKIP: current outputs already exist for $stem"
+     echo "      functions=$func_count dots=$dot_count svgs=$svg_count"
+ 
+     SKIPPED=$((SKIPPED + 1))
+     DONE=$((DONE + 1))
+-    progress_bar "$DONE" "$TOTAL" "$stem"
+ 
++    progress_bar "$DONE" "$TOTAL" "$stem"
+     echo
++
+     continue
+   fi
+ 
++  # Remove stale or incomplete outputs for this MIR file.
+   rm -f "$THIS_DOT_DIR"/*.dot
+   rm -f "$THIS_SVG_DIR"/*.svg
++
+   : > "$dot_log"
+   : > "$svg_log"
+ 
+   if ! "$LLC" \
+       -mtriple=riscv64-unknown-elf \
+-      --run-pass=dot-machine-cfg \
++      -run-pass=dot-machine-cfg \
+       -mcfg-dot-filename-prefix="$THIS_DOT_DIR/cfg" \
+       "$mir" \
++      -o /dev/null \
+       > "$dot_log" \
+       2>&1; then
++
+     echo
+-    echo "!! dot-machine-cfg failed for $mir"
+-    echo "   log: $dot_log"
++    echo "!! dot-machine-cfg failed for:"
++    echo "   $mir"
++    echo "   Log: $dot_log"
+ 
+     FAILED=$((FAILED + 1))
+     DONE=$((DONE + 1))
+-    progress_bar "$DONE" "$TOTAL" "$stem"
+ 
++    progress_bar "$DONE" "$TOTAL" "$stem"
+     echo
++
+     continue
+   fi
+ 
++  svg_failed=0
++
+   for dotfile in "$THIS_DOT_DIR"/*.dot; do
+     [ -f "$dotfile" ] || continue
+ 
+     dotbase="$(basename "$dotfile" .dot)"
++    svgfile="$THIS_SVG_DIR/$dotbase.svg"
+ 
+-    if ! dot -Tsvg "$dotfile" \
+-        -o "$THIS_SVG_DIR/$dotbase.svg" \
++    if ! dot \
++        -Tsvg \
++        "$dotfile" \
++        -o "$svgfile" \
+         >> "$svg_log" \
+         2>&1; then
+-      echo "!! dot->svg failed for $dotfile" >> "$svg_log"
++
++      echo "!! dot-to-SVG failed for: $dotfile" >> "$svg_log"
++      svg_failed=1
+     fi
+   done
+ 
+-  PROCESSED=$((PROCESSED + 1))
++  if [ "$svg_failed" -ne 0 ]; then
++    echo
++    echo "!! one or more SVG conversions failed for:"
++    echo "   $mir"
++    echo "   Log: $svg_log"
++
++    FAILED=$((FAILED + 1))
++  else
++    PROCESSED=$((PROCESSED + 1))
++  fi
++
+   DONE=$((DONE + 1))
+   progress_bar "$DONE" "$TOTAL" "$stem"
+ 
+   echo
+   echo "DONE: $mir"
+ 
+-done < <(find "$MIRDIR" -type f -name '*.after-expand-count.mir' -print0)
++done < <(
++  find "$MIRDIR" \
++    -type f \
++    -name '*.after-expand-count.mir' \
++    -print0
++)
+ 
+ echo
+ echo "All done."
+-echo "DOT output: $DOTROOT"
+-echo "SVG output: $SVGROOT"
+-echo "Logs:       $LOGDIR"
++echo
++echo "DOT output:"
++echo "  $DOTROOT"
++echo
++echo "SVG output:"
++echo "  $SVGROOT"
++echo
++echo "Logs:"
++echo "  $LOGDIR"
+ echo
+ echo "Summary:"
+ echo "  Total:     $TOTAL"
+ echo "  Processed: $PROCESSED"
+ echo "  Skipped:   $SKIPPED"
+-echo "  Failed:    $FAILED"
++echo "  Failed:    $FAILED"
+\ No newline at end of file
+diff --git a/tests/scripts/run_all_bc.sh b/tests/scripts/run_all_bc.sh
+index 7afde66..0d0076d 100755
+--- a/tests/scripts/run_all_bc.sh
++++ b/tests/scripts/run_all_bc.sh
+@@ -1,27 +1,31 @@
+ #!/usr/bin/env bash
+-set -u
++set -uo pipefail
+ 
+-# Directory where this script physically lives.
+-# Helper scripts are loaded from here.
+ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ 
+ MCFG=0
++BNERD=0
+ 
+ usage() {
+   echo "Usage:"
+-  echo "  $(basename "$0") [-mcfg]"
++  echo "  $(basename "$0") [+mcfg] [+bnerd]"
+   echo
+   echo "Options:"
+-  echo "  -mcfg    After LRSC CSV generation, run mcfg-for-outTest.sh on outTest/"
++  echo "  -mcfg    Run LLVM dot-machine-cfg and render the generated DOT files to SVG"
++  echo "  +bnerd   Run the riscv-insert-bnerd-sc pass"
+   echo "  -h       Show this help message"
+ }
+ 
+ while [ "$#" -gt 0 ]; do
+   case "$1" in
+-    -mcfg|--mcfg)
++    +mcfg|--mcfg)
+       MCFG=1
+       shift
+       ;;
++    +bnerd)
++      BNERD=1
++      shift
++      ;;
+     -h|--help)
+       usage
+       exit 0
+@@ -34,50 +38,81 @@ while [ "$#" -gt 0 ]; do
+   esac
+ done
+ 
+-LLVM_ROOT="${LLVM_ROOT:-$HOME/llvm-repos/test/llvm-project}"
++LLVM_ROOT="${LLVM_ROOT:-$HOME/llvm-repos/test/llvm-project-other}"
+ LLVM_BUILD="${LLVM_BUILD:-$LLVM_ROOT/build}"
+ 
+ LLVM_DIS="$LLVM_BUILD/bin/llvm-dis"
+ LLC="$LLVM_BUILD/bin/llc"
+ 
+-# Directory where you run this script from.
+-# .bc files are searched from here.
+ ROOTDIR="$(pwd)"
+ OUTROOT="$ROOTDIR/outTest"
+ 
+ IRDIR="$OUTROOT/IRs"
+-MIR_BEFORE_DIR="$OUTROOT/MIR-before-bnerd"
+-MIR_AFTER_DIR="$OUTROOT/MIR-after-expand-count"
++
++if [ "$BNERD" -eq 1 ]; then
++  MIR_AFTER_DIR="$OUTROOT/MIR-after-bnerd"
++  ASMDIR="$OUTROOT/ASM-after-bnerd"
++  OUTPUT_STAGE="after-bnerd"
++else
++  MIR_AFTER_DIR="$OUTROOT/MIR-after-expand-count"
++  ASMDIR="$OUTROOT/ASM-after-expand-count"
++  OUTPUT_STAGE="after-expand-count"
++fi
++
+ JSONDIR="$OUTROOT/LRSC-json"
+ LOGDIR="$OUTROOT/LOGs"
+ GREPDIR="$OUTROOT/GREPs"
+ 
++# Staged symbolic links keep generated .lrscStats.json files inside outTest.
++BC_STAGE_DIR="$OUTROOT/BC-input"
++
+ RESULTDIR="$OUTROOT/FINAL-results"
+ CFGDIR="$OUTROOT/CFG"
++MCFG_DOT_DIR="$CFGDIR/DOT-after-expand-count"
++MCFG_SVG_DIR="$CFGDIR/SVG-after-expand-count"
+ 
+ SUMMARY_CSV="$RESULTDIR/lrsc_summary.csv"
+ LONGEST_CSV="$RESULTDIR/longest_lr_path_loops.csv"
+ 
+ PARSE_SCRIPT="$SCRIPT_DIR/parse_lrsc_json.py"
+ LONGEST_SCRIPT="$SCRIPT_DIR/extract_longest_lr_path_loops.py"
+-MCFG_SCRIPT="$SCRIPT_DIR/mcfg-for-outTest.sh"
+ 
+-MCFG_LOG="$RESULTDIR/mcfg-for-outTest.log"
++# Using an array prevents accidental option concatenation such as:
++# -mattr=+a,-zaamo,+bnerd-O2
++LLC_COMMON_ARGS=(
++  -mtriple=riscv64-unknown-elf
++  -mattr=+a,-zaamo,+bnerd
++  -O2
++)
+ 
+ mkdir -p \
+   "$IRDIR" \
+-  "$MIR_BEFORE_DIR" \
+   "$MIR_AFTER_DIR" \
++  "$ASMDIR" \
+   "$JSONDIR" \
+   "$LOGDIR" \
+   "$GREPDIR" \
++  "$BC_STAGE_DIR" \
+   "$RESULTDIR"
+ 
+ if [ "$MCFG" -eq 1 ]; then
+-  mkdir -p "$CFGDIR"
++  mkdir -p "$CFGDIR" "$MCFG_DOT_DIR" "$MCFG_SVG_DIR"
+ fi
+ 
+-TOTAL=$(find . -type f -name '*.bc' | wc -l)
++# Older versions of this script produced a redundant MIR-before-bnerd checkpoint.
++rm -rf -- "$OUTROOT/MIR-before-bnerd"
++
++BC_FILES=()
++
++while IFS= read -r -d '' bc; do
++  BC_FILES+=("$bc")
++done < <(
++  find . \
++    -path './outTest' -prune \
++    -o -type f -name '*.bc' -print0
++)
++
++TOTAL=${#BC_FILES[@]}
+ DONE=0
+ 
+ progress_bar() {
+@@ -104,7 +139,12 @@ progress_bar() {
+   empty_bar=$(printf "%${empty}s" "" | tr ' ' '-')
+ 
+   printf "\r[%s%s] %3d%%  %d/%d  %s" \
+-    "$filled_bar" "$empty_bar" "$percent" "$done" "$total" "$current"
++    "$filled_bar" \
++    "$empty_bar" \
++    "$percent" \
++    "$done" \
++    "$total" \
++    "$current"
+ }
+ 
+ echo "Total .bc files: $TOTAL"
+@@ -113,20 +153,21 @@ echo "Run dir:          $ROOTDIR"
+ echo "Output root:      $OUTROOT"
+ echo "Final result dir: $RESULTDIR"
+ 
++if [ "$BNERD" -eq 1 ]; then
++  echo "Bnerd pass:       enabled"
++else
++  echo "Bnerd pass:       disabled"
++fi
++
+ if [ "$MCFG" -eq 1 ]; then
+   echo "CFG dir:          $CFGDIR"
+ fi
+ 
+ echo
+-
+ echo "Helper scripts:"
+ echo "  $PARSE_SCRIPT"
+ echo "  $LONGEST_SCRIPT"
+ 
+-if [ "$MCFG" -eq 1 ]; then
+-  echo "  $MCFG_SCRIPT"
+-fi
+-
+ echo
+ 
+ if [ ! -x "$LLVM_DIS" ]; then
+@@ -141,6 +182,16 @@ if [ ! -x "$LLC" ]; then
+   exit 1
+ fi
+ 
++if ! command -v python3 >/dev/null 2>&1; then
++  echo "ERROR: python3 was not found."
++  exit 1
++fi
++
++if [ "$MCFG" -eq 1 ] && ! command -v dot >/dev/null 2>&1; then
++  echo "ERROR: Graphviz 'dot' was not found."
++  exit 1
++fi
++
+ if [ ! -f "$PARSE_SCRIPT" ]; then
+   echo "ERROR: parse script not found:"
+   echo "  $PARSE_SCRIPT"
+@@ -153,15 +204,16 @@ if [ ! -f "$LONGEST_SCRIPT" ]; then
+   exit 1
+ fi
+ 
+-if [ "$MCFG" -eq 1 ] && [ ! -f "$MCFG_SCRIPT" ]; then
+-  echo "ERROR: MCFG script not found:"
+-  echo "  $MCFG_SCRIPT"
+-  exit 1
++
++if [ "$TOTAL" -eq 0 ]; then
++  echo "No .bc files were found."
++  exit 0
+ fi
+ 
+-find . -type f -name '*.bc' -print0 | while IFS= read -r -d '' bc; do
++for bc in "${BC_FILES[@]}"; do
+   rel="${bc#./}"
+   stem="${rel%.bc}"
++
+   safe="${stem//\//_}"
+   safe="${safe#.}"
+ 
+@@ -169,75 +221,197 @@ find . -type f -name '*.bc' -print0 | while IFS= read -r -d '' bc; do
+ 
+   ll="$IRDIR/$safe.ll"
+ 
+-  mir_before="$MIR_BEFORE_DIR/$safe.before-bnerd.mir"
+-  mir_after="$MIR_AFTER_DIR/$safe.after-expand-count.mir"
++  mir_after="$MIR_AFTER_DIR/$safe.$OUTPUT_STAGE.mir"
++  asm_after="$ASMDIR/$safe.$OUTPUT_STAGE.s"
+ 
+   llvm_dis_log="$LOGDIR/$safe.llvm-dis.log"
+-  stop_log="$LOGDIR/$safe.stop-before-bnerd.log"
+   pass_log="$LOGDIR/$safe.expand-count.log"
++  asm_log="$LOGDIR/$safe.asm-from-bc.log"
+ 
+   lrsc_grep="$GREPDIR/$safe.after-expand-count.lrsc.txt"
+   cfg_grep="$GREPDIR/$safe.after-expand-count.cfg.txt"
+ 
+-  scattered_json="$mir_before.lrscStats.json"
++  THIS_DOT_DIR="$MCFG_DOT_DIR/$safe"
++  THIS_SVG_DIR="$MCFG_SVG_DIR/$safe"
++  dot_log="$LOGDIR/$safe.dot-machine-cfg.log"
++  svg_log="$LOGDIR/$safe.dot-to-svg.log"
++
++  # Pass the BC file through an outTest-local symbolic link.
++  # This causes the custom JSON output to stay under outTest.
++  staged_bc="$BC_STAGE_DIR/$safe.bc"
++  staged_json="$staged_bc.lrscStats.json"
+ 
+   echo
+   echo "==> $bc"
+   progress_bar "$DONE" "$TOTAL" "$safe"
+ 
+-  if ! "$LLVM_DIS" "$bc_abs" -o "$ll" > "$llvm_dis_log" 2>&1; then
++  if ! "$LLVM_DIS" \
++      "$bc_abs" \
++      -o "$ll" \
++      > "$llvm_dis_log" \
++      2>&1; then
+     echo
+     echo "!! llvm-dis failed for $bc"
+     echo "   Log: $llvm_dis_log"
++
+     DONE=$((DONE + 1))
+     progress_bar "$DONE" "$TOTAL" "$safe"
+     continue
+   fi
+ 
+-  if ! "$LLC" \
+-      -mtriple=riscv64-unknown-elf \
+-      -mattr=+a,-zaamo \
+-      -O2 \
+-      "$bc_abs" \
+-      -stop-before=riscv-insert-bnerd-sc \
+-      -o "$mir_before" \
+-      > "$stop_log" \
+-      2>&1; then
++  rm -f -- "$staged_bc" "$staged_json"
++  rm -f -- "$JSONDIR/$safe".*.lrsc.json
++
++  if ! ln -s -- "$bc_abs" "$staged_bc"; then
+     echo
+-    echo "!! stop-before bnerd failed for $bc"
+-    echo "   Log: $stop_log"
++    echo "!! could not create staged BC link for $bc"
++    echo "   Link: $staged_bc"
++
+     DONE=$((DONE + 1))
+     progress_bar "$DONE" "$TOTAL" "$safe"
+     continue
+   fi
+ 
+-  rm -f "$scattered_json"
+-  rm -f "$JSONDIR/$safe".*.lrsc.json
++  # Run the custom passes through the normal code-generation pipeline.
++  #
++  # Required pipeline order:
++  #
++  #   riscv-expand-inline-asm
++  #   riscv-count-lr-sc
++  #   riscv-insert-bnerd-sc
++  #
++  # Keep this as the single MIR checkpoint used for inspection.
++  #
++  # When -mcfg is enabled, dot-machine-cfg is already inserted into the live
++  # RISC-V pass pipeline immediately after riscv-count-lr-sc. Stop after the
++  # printer instead of after the count pass so the printer actually runs.
++  PASS_STOP_ARGS=(-stop-after=riscv-count-lr-sc)
++  LIVE_MCFG_ARGS=()
++  BNERD_ARGS=()
++
++  if [ "$BNERD" -eq 1 ]; then
++    BNERD_ARGS=(-riscv-run-bnerd)
++    PASS_STOP_ARGS=(-stop-after=dot-machine-cfg)
++  fi
++
++  if [ "$MCFG" -eq 1 ]; then
++    rm -rf -- "$THIS_DOT_DIR" "$THIS_SVG_DIR"
++    mkdir -p "$THIS_DOT_DIR" "$THIS_SVG_DIR"
++
++    # If Bnerd is disabled, stop after the CFG printer so it runs.
++    # If Bnerd is enabled, continue through riscv-insert-bnerd-sc.
++    if [ "$BNERD" -eq 0 ]; then
++      PASS_STOP_ARGS=(-stop-after=dot-machine-cfg)
++    fi
++
++    LIVE_MCFG_ARGS=(
++      -riscv-dump-lrsc-mcfg
++      -mcfg-dot-filename-prefix="$THIS_DOT_DIR/cfg"
++    )
++  fi
+ 
+   if ! "$LLC" \
+-      -mtriple=riscv64-unknown-elf \
+-      -mattr=+a,-zaamo \
+-      -run-pass=riscv-expand-inline-asm,riscv-count-lr-sc \
++      "${LLC_COMMON_ARGS[@]}" \
+       -verify-machineinstrs \
+       -dump-insn-stats-json \
+-      "$mir_before" \
++      -debug-only=riscv-expand-inline-asm \
++      "${BNERD_ARGS[@]}" \
++      "${LIVE_MCFG_ARGS[@]}" \
++      "${PASS_STOP_ARGS[@]}" \
++      "$staged_bc" \
+       -o "$mir_after" \
+-      > /dev/null \
+-      2> "$pass_log"; then
++      > "$pass_log" \
++      2>&1; then
+     echo
+     echo "!! expand+count failed for $bc"
+     echo "   Log: $pass_log"
++
++    rm -f -- "$staged_bc"
++
+     DONE=$((DONE + 1))
+     progress_bar "$DONE" "$TOTAL" "$safe"
+     continue
+   fi
+ 
+-  if [ -f "$scattered_json" ]; then
++  # Keep the saved MIR untouched; it is for inspection only.
++
++  if [ "$MCFG" -eq 1 ]; then
++    svg_failed=0
++    : > "$svg_log"
++
++    for dotfile in "$THIS_DOT_DIR"/*.dot; do
++      [ -f "$dotfile" ] || continue
++
++      dotbase="$(basename "$dotfile" .dot)"
++      svgfile="$THIS_SVG_DIR/$dotbase.svg"
++
++      if ! dot \
++          -Tsvg \
++          "$dotfile" \
++          -o "$svgfile" \
++          >> "$svg_log" \
++          2>&1; then
++        svg_failed=1
++      fi
++    done
++
++    if [ "$svg_failed" -ne 0 ]; then
++      echo
++      echo "!! one or more SVG conversions failed for:"
++      echo "   $bc"
++      echo "   Log: $svg_log"
++    fi
++
++    # dot-machine-cfg writes diagnostics to stderr, which is part of pass_log
++    # because it ran in the same llc invocation.
++    cp -- "$pass_log" "$dot_log" 2>/dev/null || true
++  fi
++
++  # Generate assembly directly from BC so the saved MIR never has to be reparsed.
++  if ! "$LLC" \
++      "${LLC_COMMON_ARGS[@]}" \
++      -verify-machineinstrs \
++      "${BNERD_ARGS[@]}" \
++      "$staged_bc" \
++      -o "$asm_after" \
++      > "$asm_log" \
++      2>&1; then
++    echo
++    echo "!! assembly generation from BC failed for $bc"
++    echo "   BC:  $staged_bc"
++    echo "   Log: $asm_log"
++
++    rm -f -- "$staged_bc"
++
++    DONE=$((DONE + 1))
++    progress_bar "$DONE" "$TOTAL" "$safe"
++    continue
++  fi
++
++  # Normally the JSON file is based on the input filename.
++  # These fallback paths also cover implementations that use the output
++  # filename or resolve the symbolic link before creating the JSON.
++  json_candidates=(
++    "$staged_json"
++    "$bc_abs.lrscStats.json"
++    "$mir_after.lrscStats.json"
++  )
++
++  scattered_json=""
++
++  for candidate in "${json_candidates[@]}"; do
++    if [ -f "$candidate" ]; then
++      scattered_json="$candidate"
++      break
++    fi
++  done
++
++  if [ -n "$scattered_json" ]; then
+     python3 - "$scattered_json" "$JSONDIR" "$safe" <<'PY'
++import hashlib
+ import json
+ import re
+ import sys
+-import hashlib
+ from pathlib import Path
+ 
+ input_json = Path(sys.argv[1])
+@@ -247,27 +421,30 @@ module_name = sys.argv[3]
+ MAX_FILENAME_LEN = 220
+ EXT = ".lrsc.json"
+ 
+-def safe_filename(s):
+-    s = s.replace("/", "_")
+-    s = s.replace("\\", "_")
+-    s = s.replace(" ", "_")
+-    s = re.sub(r"[^A-Za-z0-9_.$@+-]", "_", s)
+-    return s
+ 
+-def shorten(s, max_len):
+-    if len(s) <= max_len:
+-        return s
++def safe_filename(value):
++    value = value.replace("/", "_")
++    value = value.replace("\\", "_")
++    value = value.replace(" ", "_")
++    value = re.sub(r"[^A-Za-z0-9_.$@+-]", "_", value)
++    return value
++
+ 
+-    h = hashlib.sha1(s.encode("utf-8")).hexdigest()[:12]
+-    keep = max_len - len(h) - 1
++def shorten(value, max_len):
++    if len(value) <= max_len:
++        return value
++
++    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:12]
++    keep = max_len - len(digest) - 1
+ 
+     if keep < 8:
+-        return h
++        return digest
++
++    return value[:keep] + "-" + digest
+ 
+-    return s[:keep] + "-" + h
+ 
+-with input_json.open("r", errors="replace") as f:
+-    data = json.load(f)
++with input_json.open("r", errors="replace") as input_file:
++    data = json.load(input_file)
+ 
+ functions = data.get("function", {})
+ 
+@@ -277,14 +454,26 @@ module_part = shorten(module_safe, 80)
+ for func_name, func_stats in functions.items():
+     func_safe = safe_filename(func_name)
+ 
+-    max_func_len = MAX_FILENAME_LEN - len(module_part) - len(EXT) - 1
+-    func_part = shorten(func_safe, max_func_len)
++    max_func_len = (
++        MAX_FILENAME_LEN
++        - len(module_part)
++        - len(EXT)
++        - 1
++    )
+ 
++    func_part = shorten(func_safe, max_func_len)
+     out_name = f"{module_part}.{func_part}{EXT}"
+ 
+     if len(out_name) > MAX_FILENAME_LEN:
+         module_part_short = shorten(module_safe, 40)
+-        max_func_len = MAX_FILENAME_LEN - len(module_part_short) - len(EXT) - 1
++
++        max_func_len = (
++            MAX_FILENAME_LEN
++            - len(module_part_short)
++            - len(EXT)
++            - 1
++        )
++
+         func_part = shorten(func_safe, max_func_len)
+         out_name = f"{module_part_short}.{func_part}{EXT}"
+ 
+@@ -297,17 +486,37 @@ for func_name, func_stats in functions.items():
+         }
+     }
+ 
+-    with out_path.open("w") as out:
+-        json.dump(one_func_json, out, indent=2)
++    with out_path.open("w") as output_file:
++        json.dump(one_func_json, output_file, indent=2)
+ 
+ input_json.unlink()
+ PY
++
++    if [ "$?" -ne 0 ]; then
++      echo "!! JSON splitting failed for $bc" >> "$pass_log"
++    fi
+   else
+-    echo "!! expected LRSC JSON not found: $scattered_json" >> "$pass_log"
++    echo "!! expected LRSC JSON was not found" >> "$pass_log"
++    echo "   Checked:" >> "$pass_log"
++
++    for candidate in "${json_candidates[@]}"; do
++      echo "     $candidate" >> "$pass_log"
++    done
+   fi
+ 
+-  grep -nE 'LR_|SC_' "$mir_after" > "$lrsc_grep" 2>/dev/null || true
+-  grep -nE '^bb\.|^[[:space:]]*successors:' "$mir_after" > "$cfg_grep" 2>/dev/null || true
++  rm -f -- "$staged_bc"
++
++  grep -nE \
++    'LR_|SC_' \
++    "$mir_after" \
++    > "$lrsc_grep" \
++    2>/dev/null || true
++
++  grep -nE \
++    '^bb\.|^[[:space:]]*successors:' \
++    "$mir_after" \
++    > "$cfg_grep" \
++    2>/dev/null || true
+ 
+   DONE=$((DONE + 1))
+   progress_bar "$DONE" "$TOTAL" "$safe"
+@@ -318,6 +527,10 @@ done
+ 
+ echo
+ echo "Finished LLVM pass run."
++echo "Generated MIR dir:"
++echo "  $MIR_AFTER_DIR"
++echo "Generated ASM dir:"
++echo "  $ASMDIR"
+ echo "Generated JSON dir:"
+ echo "  $JSONDIR"
+ echo
+@@ -329,7 +542,12 @@ echo "Generating LRSC summary CSV..."
+ echo "  Input:  $JSONDIR"
+ echo "  Output: $SUMMARY_CSV"
+ 
+-if ! python3 "$PARSE_SCRIPT" "$JSONDIR" "$SUMMARY_CSV" > "$RESULTDIR/parse_lrsc_json.log" 2>&1; then
++if ! python3 \
++    "$PARSE_SCRIPT" \
++    "$JSONDIR" \
++    "$SUMMARY_CSV" \
++    > "$RESULTDIR/parse_lrsc_json.log" \
++    2>&1; then
+   echo "ERROR: parse_lrsc_json.py failed."
+   echo "Check log:"
+   echo "  $RESULTDIR/parse_lrsc_json.log"
+@@ -341,50 +559,33 @@ echo "Generating longest LR path loop CSV..."
+ echo "  Input:  $JSONDIR"
+ echo "  Output: $LONGEST_CSV"
+ 
+-if ! python3 "$LONGEST_SCRIPT" "$JSONDIR" -o "$LONGEST_CSV" > "$RESULTDIR/extract_longest_lr_path_loops.log" 2>&1; then
++if ! python3 \
++    "$LONGEST_SCRIPT" \
++    "$JSONDIR" \
++    -o "$LONGEST_CSV" \
++    > "$RESULTDIR/extract_longest_lr_path_loops.log" \
++    2>&1; then
+   echo "ERROR: extract_longest_lr_path_loops.py failed."
+   echo "Check log:"
+   echo "  $RESULTDIR/extract_longest_lr_path_loops.log"
+   exit 1
+ fi
+ 
+-if [ "$MCFG" -eq 1 ]; then
+-  echo
+-  echo "Generating MCFG output..."
+-  echo "  Script: $MCFG_SCRIPT"
+-  echo "  Input:  $OUTROOT/"
+-  echo "  CFG dir: $CFGDIR"
+-  echo "  Log:    $MCFG_LOG"
+-
+-  mkdir -p "$CFGDIR"
+-
+-  if ! (
+-    cd "$CFGDIR" || exit 1
+-    bash "$MCFG_SCRIPT" "$OUTROOT/"
+-  ) > "$MCFG_LOG" 2>&1; then
+-    echo "ERROR: mcfg-for-outTest.sh failed."
+-    echo "Check log:"
+-    echo "  $MCFG_LOG"
+-    exit 1
+-  fi
+-fi
+-
+ echo
+ echo "All done."
+ echo
+ echo "Final results:"
+ echo "  $SUMMARY_CSV"
+ echo "  $LONGEST_CSV"
++echo "  $MIR_AFTER_DIR"
++echo "  $ASMDIR"
+ 
+ if [ "$MCFG" -eq 1 ]; then
+-  echo "  $CFGDIR"
++  echo "  $MCFG_DOT_DIR"
++  echo "  $MCFG_SVG_DIR"
+ fi
+ 
+ echo
+ echo "Logs:"
+ echo "  $RESULTDIR/parse_lrsc_json.log"
+-echo "  $RESULTDIR/extract_longest_lr_path_loops.log"
+-
+-if [ "$MCFG" -eq 1 ]; then
+-  echo "  $MCFG_LOG"
+-fi
++echo "  $RESULTDIR/extract_longest_lr_path_loops.log"
+\ No newline at end of file
